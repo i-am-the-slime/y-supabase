@@ -24,6 +24,7 @@ export default class SupabaseProvider extends EventEmitter {
 
   private _synced: boolean = false;
   private resyncInterval: NodeJS.Timer | undefined;
+  private debounceUpdate: () => void;
   protected logger: debug.Debugger;
   public readonly id: number;
 
@@ -39,7 +40,9 @@ export default class SupabaseProvider extends EventEmitter {
     if (origin !== this) {
       this.logger('document updated locally, broadcasting update to peers', this.isOnline());
       this.emit('message', update);
-      this.debounce(() => this.save());
+      console.log('Debounce: Calling debounce');
+      this.debounceUpdate();
+      console.log('Debounce: Finished debounce');
     }
   }
 
@@ -143,18 +146,23 @@ export default class SupabaseProvider extends EventEmitter {
         });
     }
   }
-  private debounce = (fn: Function, ms = 300) => {
-    let timeoutId: ReturnType<typeof setTimeout>;
-    return function (this: any, ...args: any[]) {
-      clearTimeout(timeoutId);
-      this.logger('Debounce reset');
-      timeoutId = setTimeout(() => {
-        this.logger('Debounce happened');
-        fn.apply(this, args);
-      }, ms);
-    };
-  };
 
+  private debounce<T extends (...args: any[]) => any>(func: T, wait: number) {
+    let timeout: ReturnType<typeof setTimeout> | null;
+    return (...args: Parameters<T>): Promise<ReturnType<T>> => {
+      const later = () => {
+        timeout = null;
+        return func(...args);
+      };
+      clearTimeout(timeout!);
+      timeout = setTimeout(later, wait);
+      return new Promise((resolve) => {
+        if (!timeout) {
+          resolve(func(...args));
+        }
+      });
+    };
+  }
   constructor(private doc: Y.Doc, private supabase: SupabaseClient, private config: SupabaseProviderConfig) {
     super();
     this.awareness = this.config.awareness || new awarenessProtocol.Awareness(doc);
@@ -172,6 +180,11 @@ export default class SupabaseProvider extends EventEmitter {
 
     this.logger('constructor initializing');
     this.logger('connecting to Supabase Realtime', doc.guid);
+
+    this.debounceUpdate = this.debounce(() => {
+      this.logger('Debounce: saving document');
+      this.save();
+    }, 5000);
 
     if (this.config.resyncInterval || typeof this.config.resyncInterval === 'undefined') {
       if (this.config.resyncInterval && this.config.resyncInterval < 3000) {
