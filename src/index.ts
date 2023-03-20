@@ -15,6 +15,7 @@ export interface SupabaseProviderConfig {
   id: string | number;
   awareness?: awarenessProtocol.Awareness;
   resyncInterval?: number | false;
+  saveInterval?: number;
 }
 
 export default class SupabaseProvider extends EventEmitter {
@@ -39,11 +40,8 @@ export default class SupabaseProvider extends EventEmitter {
   onDocumentUpdate(update: Uint8Array, origin: any) {
     if (origin !== this) {
       this.logger('document updated locally, broadcasting update to peers', this.isOnline());
-      console.log('Debounce: Before emit');
       this.emit('message', update);
-      console.log('Debounce: Calling debounce');
       this.debounceUpdate();
-      console.log('Debounce: Finished debounce');
     }
   }
 
@@ -183,9 +181,9 @@ export default class SupabaseProvider extends EventEmitter {
     this.logger('connecting to Supabase Realtime', doc.guid);
 
     this.debounceUpdate = this.debounce(() => {
-      this.logger('Debounce: saving document');
+      this.logger('saving document');
       this.save();
-    }, 5000);
+    }, this.config.saveInterval || 5000);
 
     if (this.config.resyncInterval || typeof this.config.resyncInterval === 'undefined') {
       if (this.config.resyncInterval && this.config.resyncInterval < 3000) {
