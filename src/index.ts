@@ -39,7 +39,7 @@ export default class SupabaseProvider extends EventEmitter {
     if (origin !== this) {
       this.logger('document updated locally, broadcasting update to peers', this.isOnline());
       this.emit('message', update);
-      this.save();
+      this.debounce(() => this.save());
     }
   }
 
@@ -50,7 +50,9 @@ export default class SupabaseProvider extends EventEmitter {
   }
 
   removeSelfFromAwarenessOnUnload() {
-    awarenessProtocol.removeAwarenessStates(this.awareness, [this.doc.clientID], 'window unload');
+    if (this.doc != null) {
+      awarenessProtocol.removeAwarenessStates(this.awareness, [this.doc.clientID], 'window unload');
+    }
   }
 
   async save() {
@@ -141,10 +143,20 @@ export default class SupabaseProvider extends EventEmitter {
         });
     }
   }
+  private debounce = (fn: Function, ms = 300) => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    return function (this: any, ...args: any[]) {
+      clearTimeout(timeoutId);
+      this.logger('Debounce reset');
+      timeoutId = setTimeout(() => {
+        this.logger('Debounce happened');
+        fn.apply(this, args);
+      }, ms);
+    };
+  };
 
   constructor(private doc: Y.Doc, private supabase: SupabaseClient, private config: SupabaseProviderConfig) {
     super();
-
     this.awareness = this.config.awareness || new awarenessProtocol.Awareness(doc);
 
     this.config = config || {};
@@ -192,6 +204,9 @@ export default class SupabaseProvider extends EventEmitter {
         });
     });
     this.on('message', (update) => {
+      console.log('Got update');
+      Y.logUpdate(update);
+
       if (this.channel)
         this.channel.send({
           type: 'broadcast',
