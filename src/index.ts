@@ -39,6 +39,7 @@ export default class SupabaseProvider extends EventEmitter {
   onDocumentUpdate(update: Uint8Array, origin: any) {
     if (origin !== this) {
       this.logger('document updated locally, broadcasting update to peers', this.isOnline());
+      console.log('Debounce: Before emit');
       this.emit('message', update);
       console.log('Debounce: Calling debounce');
       this.debounceUpdate();
