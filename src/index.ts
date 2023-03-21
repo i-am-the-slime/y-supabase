@@ -11,8 +11,11 @@ export interface SupabaseProviderConfig {
   channel: string;
   tableName: string;
   columnName: string;
+  aggregationViewName: string;
+  aggregationColumnName: string;
+  aggregationIdName?: string;
   idName?: string;
-  id: string | number;
+  id: string | number | BigInt;
   awareness?: awarenessProtocol.Awareness;
   resyncInterval?: number | false;
   saveInterval?: number;
@@ -22,6 +25,8 @@ export default class SupabaseProvider extends EventEmitter {
   public awareness: awarenessProtocol.Awareness;
   public connected = false;
   private channel: RealtimeChannel | null = null;
+
+  private previousSnapshot: Uint8Array | null = null;
 
   private _synced: boolean = false;
   private resyncInterval: NodeJS.Timer | undefined;
@@ -58,38 +63,71 @@ export default class SupabaseProvider extends EventEmitter {
   }
 
   async save() {
-    const content = Array.from(Y.encodeStateAsUpdate(this.doc));
+    const currentSnapshot = Y.encodeStateAsUpdateV2(this.doc);
+    this.logger('saving: previousSnapshot', this.previousSnapshot);
+    this.logger('saving: currentSnapshot', currentSnapshot);
 
-    const { error } = await this.supabase
-      .from(this.config.tableName)
-      .update({ [this.config.columnName]: content })
-      .eq(this.config.idName || 'id', this.config.id);
+    let diff;
+    if (this.previousSnapshot == null) {
+      diff = Y.encodeStateAsUpdateV2(this.doc);
+    } else {
+      diff = Y.diffUpdateV2(currentSnapshot, this.previousSnapshot);
+    }
+
+    this.logger('saving: diff', diff);
+    const content = Array.from(diff);
+
+    if (JSON.stringify([0, 0]) === JSON.stringify(content)) {
+      return;
+    }
+    const upsertRecord = {
+      [this.config.idName || 'id']: this.config.id.toString(),
+      [this.config.columnName]: content,
+    } as any;
+    this.logger('saving: upsertRecord', upsertRecord);
+    const { error } = await this.supabase.from(this.config.tableName).insert(upsertRecord);
+    // .eq(this.config.idName || 'id', this.config.id);
+    // .eq(this.config.idName || 'id', this.config.id);
 
     if (error) {
       throw error;
     }
 
+    this.updatePreviousSnapshot();
     this.emit('save', this.version);
   }
 
   private async onConnect() {
     this.logger('connected');
 
+    this.logger('loading: starting');
     const { data, error, status } = await this.supabase
-      .from(this.config.tableName)
-      .select<string, { [key: string]: number[] }>(`${this.config.columnName}`)
-      .eq(this.config.idName || 'id', this.config.id)
-      .single();
+      .from(this.config.aggregationViewName)
+      .select<string, { [key: string]: number[][] }>(`${this.config.aggregationColumnName}`)
+      .eq(this.config.aggregationIdName || 'id', this.config.id)
+      .maybeSingle();
 
     this.logger('retrieved data from supabase', status);
 
-    if (data && data[this.config.columnName]) {
+    this.logger('loading: data', data);
+    if (data && data[this.config.aggregationColumnName]) {
       this.logger('applying update to yjs');
-      try {
-        this.applyUpdate(Uint8Array.from(data[this.config.columnName]));
-      } catch (error) {
-        this.logger(error);
+      const diffs = data[this.config.aggregationColumnName];
+      this.logger('loading: diffs', diffs);
+
+      if (diffs.length > 0) {
+        try {
+          this.logger('applying update inner to yjs');
+          // this.applyUpdate(Uint8Array.from(diff));
+          Y.applyUpdateV2(this.doc, Y.mergeUpdatesV2(diffs.map((diff) => Uint8Array.from(diff))));
+          this.updatePreviousSnapshot();
+        } catch (error) {
+          this.logger('applying resulted in error', error);
+        }
+
+        this.version++;
       }
+      // this.applyUpdate(Uint8Array.from(data[this.config.columnName]));
     }
 
     this.logger('setting connected flag to true');
@@ -106,6 +144,10 @@ export default class SupabaseProvider extends EventEmitter {
   private applyUpdate(update: Uint8Array, origin?: any) {
     this.version++;
     Y.applyUpdate(this.doc, update, origin);
+  }
+
+  private updatePreviousSnapshot() {
+    this.previousSnapshot = Y.encodeStateVector(this.doc);
   }
 
   private disconnect() {
