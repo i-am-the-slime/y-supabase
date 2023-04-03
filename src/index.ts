@@ -5,7 +5,7 @@ import * as awarenessProtocol from 'y-protocols/awareness';
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { RealtimeChannel } from '@supabase/realtime-js';
-import { REALTIME_LISTEN_TYPES } from '@supabase/realtime-js/src/RealtimeChannel';
+import { REALTIME_LISTEN_TYPES } from '@supabase/realtime-js';
 
 export interface SupabaseProviderConfig {
   channel: string;
